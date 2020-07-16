@@ -6,11 +6,11 @@ def configs():
     parser.add_argument('--data_path',
                         type=str,
                         help="Path to data directory.",
-                        default='D://EV-FlowNet-pth/data/mvsec/')
+                        default='../data/')
     parser.add_argument('--load_path',
                         type=str,
                         help="Path to saved model.",
-                        default='D://EV-FlowNet-pth/data/log/saver/')
+                        default='../data/saver/')
     parser.add_argument('--training_instance',
                         type=str,
                         help="Specific saved model to load. A new one will be generated if empty.",
@@ -53,11 +53,11 @@ def configs():
     parser.add_argument('--test_sequence',
                         type=str,
                         help="Name of the test sequence.",
-                        default='indoor_flying1')
+                        default='outdoor_day2')
     parser.add_argument('--gt_path',
                         type=str,
                         help='Path to optical flow ground truth npz file.',
-                        default='D:\mvsec\indoor_flying1_gt_flow_dist.npz')
+                        default='../data/outdoor_day2_gt_flow_dist.npz')
     parser.add_argument('--test_plot',
                         action='store_true',
                         help='If true, the flow predictions will be visualized during testing.',

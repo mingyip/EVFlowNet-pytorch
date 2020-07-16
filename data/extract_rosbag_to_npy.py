@@ -68,18 +68,35 @@ def _save_events(args,
     del image_times[:image_iter]
     del events[:cutoff_event_iter]
     
+    print(event_time_images[0].shape)
+
     if len(event_count_images) >= max_aug:
         n_to_save = len(event_count_images) - max_aug + 1
+        # print(n_to_save)
+        np.set_printoptions(suppress=True)
         for i in range(n_to_save):
+            # print(event_image_times)
             image_times_out = np.array(event_image_times[i:i+max_aug+1])
+            # print(image_times_out)
             image_times_out = image_times_out.astype(np.float64)
+            
+
             event_time_images_np = np.array(event_time_images[i:i+max_aug], dtype=np.float32)
+            # print(len(image_times_out))
+            # print(image_times_out[0])
+            # raise
             event_time_images_np -= image_times_out[0] - t_start_ros.to_sec()
             event_time_images_np = np.clip(event_time_images_np, a_min=0, a_max=None)
             image_shape = np.array(event_time_images_np.shape, dtype=np.uint16)
             
+            # print(len(event_count_images[i:i+max_aug]), len(event_time_images_np), len(image_times_out))
+            # print(image_times_out.shape)
+
             now = np.array([np.array(event_count_images[i:i+max_aug]),event_time_images_np,image_times_out])
-            np.save(args.output_folder+cam+'_event'+str(event_image_iter).rjust(5,'0'),now)
+
+            # print(event_image_iter)
+            filename = "/Data1/dataset/evflow-data/outdoor_day2/left_events/left_event{:05d}.png".format(event_image_iter)
+            np.save(filename, now)
             event_image_iter += n_skip
 
         del event_count_images[:n_to_save]
@@ -161,7 +178,10 @@ def main():
     cols = 346
     rows = 260
     print("Processing bag")
-    bag = Bag(args.bag)
+    # print(args.bag)
+    bag = Bag("/Data1/dataset/evflow-data/outdoor_day2/outdoor_day2_data.bag")
+
+    print("Done Reading")
     # Get actual time for the start of the bag.
     t_start = bag.get_start_time()
     t_start_ros = rospy.Time(t_start)
@@ -175,11 +195,13 @@ def main():
     ifis = 0
     for topic, msg, t in bag.read_messages(
             topics=['/davis/left/image_raw',
-                    '/davis/right/image_raw',
-                    '/davis/left/events',
-                    '/davis/right/events'],
+                    # '/davis/right/image_raw',
+                    '/davis/left/events',],
+                    # '/davis/right/events'],
             start_time=rospy.Time(max(args.start_time, eps) - eps + t_start),
             end_time=rospy.Time(t_end)):
+
+        # print(t)
         # Check to make sure we're working with stereo messages.
         if not ('left' in topic or 'right' in topic):
             print('ERROR: topic {} does not contain left or right, is this stereo?'
@@ -211,7 +233,7 @@ def main():
             image = np.reshape(image, (height, width))
 
             if isLeft:
-                cv2.imwrite("/media/cyrilsterling/D/EV-FlowNet-pth/data/mvsec2/indoor_flying1/left_image{:05d}.png".format(left_image_iter),image)
+                cv2.imwrite("/Data1/dataset/evflow-data/outdoor_day2/left_images/left_image{:05d}.png".format(left_image_iter),image)
                 if left_image_iter > 0:
                     left_image_times.append(time)
                 else:
@@ -221,7 +243,7 @@ def main():
                     left_events = filter_events(left_events, left_event_image_times[-1] - t_start)
                 left_image_iter += 1
             else:
-                cv2.imwrite("/media/cyrilsterling/D/EV-FlowNet-pth/data/mvsec/outdoor_day2/right_image{:05d}.png".format(right_image_iter),image)
+                cv2.imwrite("/Data1/dataset/evflow-data/outdoor_day2/right_images/right_image{:05d}.png".format(right_image_iter),image)
                 if right_image_iter > 0:
                     right_image_times.append(time)
                 else:
@@ -249,6 +271,8 @@ def main():
             if isLeft:
                 if len(left_image_times) >= args.max_aug and\
                    left_events[-1][2] > (left_image_times[args.max_aug-1]-t_start_ros).to_sec():
+
+                    # print(len(left_event_count_images))
                     left_event_image_iter = _save_events(args,
                                                          left_events,
                                                          left_image_times,

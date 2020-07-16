@@ -17,6 +17,7 @@ def warp_images_with_flow(images, flow):
     flow_x,flow_y = flow[:,0,...],flow[:,1,...]
     coord_x, coord_y = torch.meshgrid(torch.arange(height), torch.arange(width))
 
+
     pos_x = coord_x.reshape(height,width).type(torch.float32).cuda() + flow_x
     pos_y = coord_y.reshape(height,width).type(torch.float32).cuda() + flow_y
     pos_x = (pos_x-(height-1)/2)/((height-1)/2)
@@ -90,13 +91,136 @@ def compute_photometric_loss(prev_images, next_images, flow_dict):
     return total_photometric_loss
 
 
+def compute_event_flow_loss(events, flow_dict):
+
+
+    # TODO: move device
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    xs, ys, ts, ps = events
+    eps = torch.finfo(xs.dtype).eps
+
+    loss_weight_sum = 0.
+    total_event_loss = 0.
+
+
+    
+    for batch_idx, (x, y, t, p) in enumerate(zip(xs, ys, ts, ps)):
+        for flow_idx in range(len(flow_dict)):
+            flow = flow_dict["flow{}".format(flow_idx)][batch_idx]
+            
+            neg_mask = p == -1
+            pos_mask = p == 1
+            t = (t - t[0]) / (t[-1] - t[0] + eps)
+
+            # Resize the event image to match the flow dimension
+            x /= 2**(3-flow_idx)
+            y /= 2**(3-flow_idx)
+
+            # Positive events
+            xp = x[pos_mask].to(device).type(torch.long)
+            yp = y[pos_mask].to(device).type(torch.long)
+            tp = t[pos_mask].to(device).type(torch.float)
+
+            # Negative events
+            xn = x[neg_mask].to(device).type(torch.long)
+            yn = y[neg_mask].to(device).type(torch.long)
+            tn = t[neg_mask].to(device).type(torch.float)
+
+            # Timestamp for {Forward, Backward} x {Postive, Negative}
+            t_fp = t[-1] - tp   # t[-1] should be 1
+            t_bp = t[0]  - tp   # t[0] should be 0
+            t_fn = t[-1] - tn
+            t_bn = t[0]  - tn
+
+            fp_loss = event_loss((xp, yp, t_fp), flow)
+            bp_loss = event_loss((xp, yp, t_bp), flow)
+            fn_loss = event_loss((xn, yn, t_fn), flow)
+            bn_loss = event_loss((xn, yn, t_bn), flow)
+
+            loss_weight_sum += 4
+            total_event_loss += fp_loss + bp_loss + fn_loss + bn_loss
+
+    total_event_loss /= loss_weight_sum
+    return total_event_loss
+
+
+
+
+def event_loss(events, flow):
+    
+    eps = torch.finfo(flow.dtype).eps
+    H, W = flow.shape[1:]
+    x, y, t = events
+
+    # Estimate events position after flow
+    x_ = torch.clamp(x * 255.0 + t * flow[0,y,x], min=0, max=W-1)
+    y_ = torch.clamp(y * 255.0 + t * flow[1,y,x], min=0, max=H-1)
+
+    x0 = torch.floor(x_)
+    x1 = x0 + 1
+    y0 = torch.floor(y_)
+    y1 = y0 + 1
+
+    # Interpolation ratio
+    x0_ = x_-x0
+    x1_ = x1-x_
+    y0_ = y_-y0
+    y1_ = y1-y_
+
+    Ra = x0_ * y0_
+    Rb = x1_ * y0_
+    Rc = x0_ * y1_
+    Rd = x1_ * y1_
+
+    Ta = Ra * t
+    Tb = Rb * t
+    Tc = Rc * t
+    Td = Rd * t
+
+    # Prevent R and T to be zero
+    Ra = Ra+eps; Rb = Rb+eps; Rc = Rc+eps; Rd = Rd+eps
+    Ta = Ta+eps; Tb = Tb+eps; Tc = Tc+eps; Td = Td+eps
+
+    # Calculate interpolation flatterned index of 4 corners for all events
+    x1_idx = torch.clamp(x1, max=W-1)
+    y1_idx = torch.clamp(y1, max=H-1)
+    x0_idx = x0
+    y0_idx = y0
+
+    Ia = (x1_idx + y1_idx * W).type(torch.long)
+    Ib = (x0_idx + y1_idx * W).type(torch.long)
+    Ic = (x1_idx + y0_idx * W).type(torch.long)
+    Id = (x0_idx + y0_idx * W).type(torch.long)
+
+    # Compute the nominator and denominator
+    numerator = torch.zeros((W*H), dtype=flow.dtype, device=flow.device)
+    denominator = torch.zeros((W*H), dtype=flow.dtype, device=flow.device)
+
+    denominator.index_add_(0, Ia, Ra)
+    denominator.index_add_(0, Ib, Rb)
+    denominator.index_add_(0, Ic, Rc)
+    denominator.index_add_(0, Id, Rd)
+
+    numerator.index_add_(0, Ia, Ta)
+    numerator.index_add_(0, Ib, Tb)
+    numerator.index_add_(0, Ic, Tc)
+    numerator.index_add_(0, Id, Td)
+
+    loss = (numerator / (denominator + eps)) ** 2
+    return loss.sum()
+
+
+
+
 class TotalLoss(torch.nn.Module):
     def __init__(self, smoothness_weight, weight_decay_weight=1e-4):
         super(TotalLoss, self).__init__()
         self._smoothness_weight = smoothness_weight
         self._weight_decay_weight = weight_decay_weight
 
-    def forward(self, flow_dict, prev_image, next_image, EVFlowNet_model):
+    def forward(self, flow_dict, events, EVFlowNet_model):
+
         # weight decay loss
         weight_decay_loss = 0
         for i in EVFlowNet_model.parameters():
@@ -108,16 +232,16 @@ class TotalLoss(torch.nn.Module):
             smoothness_loss += compute_smoothness_loss(flow_dict["flow{}".format(i)])
         smoothness_loss *= self._smoothness_weight / 4.
 
-        # Photometric loss.
-        photometric_loss = compute_photometric_loss(prev_image,
-                                                    next_image,
-                                                    flow_dict)
+        # # Photometric loss.
+        # photometric_loss = compute_photometric_loss(prev_image,
+        #                                             next_image,
+        #                                             flow_dict)
 
-        # Warped next image for debugging.
-        #next_image_warped = warp_images_with_flow(next_image,
-        #                                          flow_dict['flow3'])
-        
-        loss = weight_decay_loss + photometric_loss + smoothness_loss
+        # Event compensation loss.
+        event_loss = compute_event_flow_loss(events, flow_dict)
+
+
+        loss = weight_decay_loss + event_loss + smoothness_loss
 
         return loss
 
