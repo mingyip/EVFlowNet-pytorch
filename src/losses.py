@@ -144,8 +144,8 @@ def compute_event_flow_loss(events, flow_dict):
             bn_loss = event_loss((xn, yn, tn), flow, forward=False)
 
             loss_weight_sum += 4
-            # total_event_loss += fp_loss + bp_loss + fn_loss + bn_loss
-            total_event_loss += fp_loss + bp_loss
+            total_event_loss += fp_loss + bp_loss + fn_loss + bn_loss
+            # total_event_loss += fp_loss + bp_loss
 
     total_event_loss /= loss_weight_sum
     return total_event_loss
