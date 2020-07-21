@@ -7,7 +7,11 @@ import cv2 as cv
 import torch
 import torch.nn.functional as F
 
+
+from PIL import Image, ImageDraw
 from skimage.color import hsv2rgb
+
+from vis_utils import draw_color_wheel_np, flow_viz_np
 
 def binary_search_h5_dset(dset, x, l=None, r=None, side='left'):
     l = 0 if l is None else l
@@ -70,6 +74,40 @@ def plot_image(image, lognorm=False, cmap='gray'):
     plt.imshow(image, cmap=cmap)
     plt.show()
 
+def flow_chart(width, optical_flow=True):
+    W_2 = width / 2
+
+    x = np.arange(-W_2, W_2, 1)
+    y = np.arange(-W_2, W_2, 1)
+    yy, xx = np.meshgrid(y, x)
+    r = np.sqrt(xx**2 + yy**2)
+    normed_r = r / W_2
+
+    angle = np.arctan2(xx, yy)
+    angle = 360 - (angle * 180 / np.pi)
+
+    if optical_flow:
+        # Radius as value, which maps optical flow's magnitude
+        hsv_color_wheel = np.dstack([angle, np.ones((width, width)), normed_r * 255]) 
+    else:
+        # Radius as saturation, which is a more conventional HSV wheel
+        hsv_color_wheel = np.dstack([angle, normed_r, np.full((width, width), 255)])
+
+    hsv_color_wheel[r >= W_2] = 0
+
+
+    hsv_color_wheel = np.asarray(hsv_color_wheel, dtype=np.float32)
+    hsv_color_wheel = cv.cvtColor(hsv_color_wheel, cv.COLOR_HSV2RGB)
+
+    hsv_color_wheel_flat = hsv_color_wheel.reshape(width * width, 3)
+    hsv_color_wheel_flat_tuple = [tuple(v) for v in hsv_color_wheel_flat]
+    hsv_color_wheel_img = Image.new("RGB", (width, width))
+    hsv_color_wheel_img.putdata(hsv_color_wheel_flat_tuple)
+
+
+    hsv_color_wheel_img = np.array(hsv_color_wheel_img)
+    return hsv_color_wheel_img
+
 def vis_flow(flow):
     assert flow.shape[0] == 2, "Convert flow to channel first flow"
 
@@ -88,6 +126,32 @@ def vis_flow(flow):
     hsv[:, :, 2] = ((mag - a_mag).astype(np.float32) * (255. / (b_mag - a_mag + 1e-32))).astype(np.uint8)
     flow_rgb = hsv2rgb(hsv)
     return 255 - (flow_rgb * 255).astype(np.uint8)
+
+
+    # Convert from cartesian to polar
+    mag, ang = cv.cartToPolar(flow[0], flow[1])
+
+    # Create an HSV image
+    hsv = np.zeros((flow.shape[1], flow.shape[2], 3))
+    hsv[:,:,1] = 1  # Full saturation
+    # Set hue from the flow direction
+    # if method == 1:
+    # hsv[:,:,0] = ang * (180 / np.pi / 2)
+    # else:
+    hsv[:,:,0] = 360 - (ang * (180 / np.pi))
+    # Set value from the flow magnitude
+    hsv[:,:,2] = cv.normalize(mag, None, 0, 255, cv.NORM_MINMAX)
+    # Convert HSV to int32's
+    hsv = np.asarray(hsv, dtype=np.float32)
+    rgb_flow = cv.cvtColor(hsv, cv.COLOR_HSV2RGB)
+
+    # Convert to an image
+    rgb_flow_flat = rgb_flow.reshape(rgb_flow.shape[0] * rgb_flow.shape[1], 3)
+    rgb_flow_flat_tuple = [tuple(v) for v in rgb_flow_flat]
+    flow_img = Image.new("RGB", (flow.shape[2], flow.shape[1]))
+    flow_img.putdata(rgb_flow_flat_tuple)
+    
+    return np.array(flow_img)
 
 def get_voxel_grid_as_image(voxelgrid, split=True, normalize=True):
     images = []
@@ -123,18 +187,43 @@ def cvshow_all(voxel, flow=None, frame=None, compensated=None, image_name="image
     # TODO: check voxel, frame, flow shape
     # assert voxel.shape[1:] == frame.shape
     # assert flow.shape[1:] == frame.shape
-
+# print(np.max(voxel), np.min(voxel), np.max(compensated), np.min(compensated))
     # TODO: check datatype tensor
-    voxel_ = cv.normalize(voxel, None, 0, 255, cv.NORM_MINMAX)
-    voxel_ = voxel_.astype(np.uint8)
-    voxel_[voxel == 0] = 0
-    voxel = cv.applyColorMap(voxel_, cmp)
+    # voxel_ = cv.normalize(voxel, None, 0, 255, cv.NORM_MINMAX)
+    # voxel_ = voxel_.astype(np.uint8)
+    # # voxel_[voxel == 0] = 0
+    # voxel = cv.applyColorMap(voxel_, cmp)
+    voxel = cv.cvtColor(voxel, cv.COLOR_GRAY2BGR)
 
-    if flow is None:
-        flow = np.zeros_like(voxel)
-    else:
-        flow = vis_flow(flow)
 
+
+    flow = flow_viz_np(flow[0], flow[1]) * 255
+    # flow[-100:, :100, :] = draw_color_wheel_np(100, 100) / 255
+    # cv.imshow("", flow)
+    # cv.waitKey()
+    # raise
+
+    # if flow is None:
+    #     flow = np.zeros_like(voxel)
+    # else:
+    #     # print(flow.shape)
+
+    #     # flow[:, -100:, :100] = flow_chart(100)
+
+    #     # for i in range(80):
+    #     #     for j in range(80):
+    #     #         if ((i-40)**2 + (j-40)**2) < 1600:
+    #     #             flow[:, -i-10, j+10] = [(i-40)*2, (j+40)*2]
+    #     # x = np.arange(-80, 80, 1)
+    #     # y = np.arange(-80, 80, 1)
+    #     # xx, yy = np.meshgrid(x, y, sparse=True)
+
+
+    # flow = vis_flow(flow)
+    #     flow[-100:, :100, :] = flow_chart(100)
+    #     # cv.imshow("Image", flow)
+    #     # cv.waitKey(100000)
+    #     # return
 
     if frame is None:
         frame = np.zeros_like(voxel)
@@ -144,18 +233,25 @@ def cvshow_all(voxel, flow=None, frame=None, compensated=None, image_name="image
     if compensated is None:
         compensated = np.zeros_like(frame)
     else:
-        compensated_ = cv.normalize(compensated, None, 0, 255, cv.NORM_MINMAX)
-        compensated_ = compensated_.astype(np.uint8)
-        compensated_[compensated_ == 0] = 0
-        compensated = cv.applyColorMap(compensated_, cmp)
+        # compensated_ = cv.normalize(compensated, None, 0, 255, cv.NORM_MINMAX)
+        # compensated_ = compensated_.astype(np.uint8)
+        # # compensated_[compensated_ == 0] = 0
+        # compensated = cv.applyColorMap(compensated_, cmp)
+        compensated = cv.cvtColor(compensated, cv.COLOR_GRAY2BGR)
 
+    
+    # print(np.max(voxel), np.min(voxel), np.max(flow), np.min(flow))
+    # raise
 
-    top = np.hstack([voxel, flow])
+    # voxel[voxel > 0] = 1
+    # compensated[compensated > 0] = 1
+    top = np.hstack([voxel, flow/255])
     bot = np.hstack([compensated, frame])
     final = np.vstack([top, bot])
 
+
     cv.imshow("Image", final)
-    cv.imwrite(image_name, final)
+    cv.imwrite(image_name, final*255)
     cv.waitKey(1)
 
 
@@ -394,6 +490,7 @@ def events_to_image_torch(xs, ys, ps,
             xs = xs.long().to(device)
         if ys.dtype is not torch.long:
             ys = ys.long().to(device)
+
         img.index_put_((ys, xs), ps, accumulate=True)
     return img
 

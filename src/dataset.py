@@ -142,7 +142,7 @@ class BaseDataset(Dataset):
     def __init__(self, data_path,
                 transforms={}, sensor_resolution=None, preload_events=True,
                 voxel_method={'method': 'random_k_events'}, 
-                num_bins=4, max_length=None, combined_voxel_channels=True):
+                num_bins=9, max_length=None, combined_voxel_channels=True):
 
         self.num_bins = num_bins
         self.data_path = data_path
@@ -167,9 +167,9 @@ class BaseDataset(Dataset):
 
         # TODO: remove this part
         voxel_method = {'method': 'random_k_events',
-                        'k': 60000,
+                        'k': 30000,
                         't': 0.5,
-                        'sliding_window_w': 1000,
+                        'sliding_window_w': 2500,
                         'sliding_window_t': 0.1}
         self.set_voxel_method(voxel_method)
 

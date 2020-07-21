@@ -114,32 +114,38 @@ def compute_event_flow_loss(events, flow_dict):
             t = (t - t[0]) / (t[-1] - t[0] + eps)
 
             # Resize the event image to match the flow dimension
-            x /= 2**(3-flow_idx)
-            y /= 2**(3-flow_idx)
+            x_ = x / 2**(3-flow_idx)
+            y_ = y / 2**(3-flow_idx)
 
             # Positive events
-            xp = x[pos_mask].to(device).type(torch.long)
-            yp = y[pos_mask].to(device).type(torch.long)
+            xp = x_[pos_mask].to(device).type(torch.long)
+            yp = y_[pos_mask].to(device).type(torch.long)
             tp = t[pos_mask].to(device).type(torch.float)
 
             # Negative events
-            xn = x[neg_mask].to(device).type(torch.long)
-            yn = y[neg_mask].to(device).type(torch.long)
+            xn = x_[neg_mask].to(device).type(torch.long)
+            yn = y_[neg_mask].to(device).type(torch.long)
             tn = t[neg_mask].to(device).type(torch.float)
 
-            # Timestamp for {Forward, Backward} x {Postive, Negative}
-            t_fp = t[-1] - tp   # t[-1] should be 1
-            t_bp = t[0]  - tp   # t[0] should be 0
-            t_fn = t[-1] - tn
-            t_bn = t[0]  - tn
+            # # Timestamp for {Forward, Backward} x {Postive, Negative}
+            # t_fp = tp[-1] - tp   # t[-1] should be 1
+            # t_bp = tp[0]  - tp   # t[0] should be 0
+            # t_fn = tn[-1] - tn
+            # t_bn = tn[0]  - tn
 
-            fp_loss = event_loss((xp, yp, t_fp), flow)
-            bp_loss = event_loss((xp, yp, t_bp), flow)
-            fn_loss = event_loss((xn, yn, t_fn), flow)
-            bn_loss = event_loss((xn, yn, t_bn), flow)
+            # fp_loss = event_loss((xp, yp, t_fp), flow)
+            # bp_loss = event_loss((xp, yp, t_bp), flow)
+            # fn_loss = event_loss((xn, yn, t_fn), flow)
+            # bn_loss = event_loss((xn, yn, t_bn), flow)
+
+            fp_loss = event_loss((xp, yp, tp), flow, forward=True)
+            bp_loss = event_loss((xp, yp, tp), flow, forward=False)
+            fn_loss = event_loss((xn, yn, tn), flow, forward=True)
+            bn_loss = event_loss((xn, yn, tn), flow, forward=False)
 
             loss_weight_sum += 4
-            total_event_loss += fp_loss + bp_loss + fn_loss + bn_loss
+            # total_event_loss += fp_loss + bp_loss + fn_loss + bn_loss
+            total_event_loss += fp_loss + bp_loss
 
     total_event_loss /= loss_weight_sum
     return total_event_loss
@@ -147,15 +153,20 @@ def compute_event_flow_loss(events, flow_dict):
 
 
 
-def event_loss(events, flow):
+def event_loss(events, flow, forward=True):
     
     eps = torch.finfo(flow.dtype).eps
     H, W = flow.shape[1:]
     x, y, t = events
 
     # Estimate events position after flow
-    x_ = torch.clamp(x * 255.0 + t * flow[0,y,x], min=0, max=W-1)
-    y_ = torch.clamp(y * 255.0 + t * flow[1,y,x], min=0, max=H-1)
+    if forward:
+        t_ = t[-1] - t + eps
+    else:
+        t_ = t[0] - t - eps
+
+    x_ = torch.clamp(x + t_ * flow[0,y,x], min=0, max=W-1)
+    y_ = torch.clamp(y + t_ * flow[1,y,x], min=0, max=H-1)
 
     x0 = torch.floor(x_)
     x1 = x0 + 1
@@ -173,14 +184,15 @@ def event_loss(events, flow):
     Rc = x0_ * y1_
     Rd = x1_ * y1_
 
+    # Prevent R and T to be zero
+    Ra = Ra+eps; Rb = Rb+eps; Rc = Rc+eps; Rd = Rd+eps
+
     Ta = Ra * t
     Tb = Rb * t
     Tc = Rc * t
     Td = Rd * t
 
-    # Prevent R and T to be zero
-    Ra = Ra+eps; Rb = Rb+eps; Rc = Rc+eps; Rd = Rd+eps
-    Ta = Ta+eps; Tb = Tb+eps; Tc = Tc+eps; Td = Td+eps
+    # Ta = Ta+eps; Tb = Tb+eps; Tc = Tc+eps; Td = Td+eps
 
     # Calculate interpolation flatterned index of 4 corners for all events
     x1_idx = torch.clamp(x1, max=W-1)

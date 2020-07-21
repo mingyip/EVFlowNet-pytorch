@@ -31,17 +31,22 @@ def warp_events_with_flow_torch(events, flow, sensor_size=(180, 240)):
     ts = ts.to(flow.device)
     ps = ps.type(torch.long).to(flow.device)
 
+    xs = xs[ps==1]
+    ys = ys[ps==1]
+    ts = ts[ps==1]
+    ps = ps[ps==1]
+
     # TODO: Check if ts is correct calibration here
-    ts = (ts - ts[0]) / (ts[-1] - ts[0] + eps)
+    # ts = (ts - ts[0]) / (ts[-1] - ts[0] + eps)
     
-    xs_ = xs + ts * flow[0,ys,xs]
-    ys_ = ys + ts * flow[1,ys,xs]
+    xs_ = xs + (ts[-1]-ts) * flow[0,ys,xs]
+    ys_ = ys + (ts[-1]-ts) * flow[1,ys,xs]
 
     img = events_to_image_torch(xs*1.0, ys*1.0, ps, sensor_size=sensor_size, interpolation='bilinear', padding=False)
     img_ = events_to_image_torch(xs_, ys_, ps, sensor_size=sensor_size, interpolation='bilinear', padding=False)
     return img, img_
 
-def vis_events_and_flows(events, flow, sensor_size=(180, 240), image_name="img.png"):
+def vis_events_and_flows(voxel, events, flow, sensor_size=(180, 240), image_name="img.png"):
 
     xs, ys, ts, ps = events
     # crop = CropParameters(sensor_size[0], sensor_size[1], 4)
@@ -55,6 +60,7 @@ def vis_events_and_flows(events, flow, sensor_size=(180, 240), image_name="img.p
 
     cvshow_all(voxel=img, flow=flow[0].cpu().numpy()*1000, frame=None, compensated=img_, image_name=image_name)
 
+    cvshow_all(voxel=img, flow=flow[0].cpu().numpy(), frame=None, compensated=img_, image_name=image_name)
 
 def main():
     args = configs()
@@ -71,8 +77,8 @@ def main():
     # EventDataset = EventData(args.data_path, 'train')
     # EventDataLoader = torch.utils.data.DataLoader(dataset=EventDataset, batch_size=args.batch_size, shuffle=True)
 
-    h5Dataset = DynamicH5Dataset('/home/mingyip/Documents/EVFlowNet-pytorch/data/outdoor_day1_data.h5')
-    h5DataLoader = torch.utils.data.DataLoader(dataset=h5Dataset, batch_size=1, num_workers=6, shuffle=True)
+    h5Dataset = DynamicH5Dataset('/home/mingyip/Documents/EVFlowNet-pytorch/data/office.h5')
+    h5DataLoader = torch.utils.data.DataLoader(dataset=h5Dataset, batch_size=6, num_workers=6, shuffle=True)
 
 
     # for event_image, prev_image, next_image, _ in tqdm(EventDataLoader):
@@ -142,16 +148,38 @@ def main():
             ts = ts.to(device)
             ps = ps.to(device)
 
-            if iteration % 10 == 0:
-                xs_ = xs.clone()
-                ys_ = ys.clone()
-                ts_ = ts.clone()
-                ps_ = ps.clone()
+            if iteration % 100 == 0:
+                xs_ = xs[0].clone().detach().unsqueeze(0)
+                ys_ = ys[0].clone().detach().unsqueeze(0)
+                ts_ = ts[0].clone().detach().unsqueeze(0)
+                ps_ = ps[0].clone().detach().unsqueeze(0)
 
             optimizer.zero_grad()
             flow_dict = EVFlowNet_model(voxel)
 
             loss = loss_fun(flow_dict, (xs, ys, ts, ps), EVFlowNet_model)
+
+            if iteration % 100 == 0:
+                print('iteration:', iteration)
+                print('loss:', loss_sum/100)
+                loss_sum = 0.0
+
+                flow = flow_dict["flow3"].clone().detach()
+                flow = flow[0].unsqueeze(0)
+                # print(torch.max(flow), torch.min(flow))
+
+
+                voxel_ = voxel.cpu().numpy().squeeze()
+                voxel_ = np.sum(voxel_, axis=0)
+
+                vis_events_and_flows(voxel_,
+                                (xs_, ys_, ts_, ps_), 
+                                flow, 
+                                sensor_size=flow.shape[-2:],
+                                image_name="results/img{:07d}.png".format(epoch * 10000 + iteration))
+
+            # if iteration % 1000 == 999:
+                scheduler.step()
 
             loss.backward()
             optimizer.step()
@@ -159,20 +187,10 @@ def main():
             iteration += 1
             size += 1
 
-            if iteration % 10 == 0:
-                print('iteration:', iteration)
-                print('loss:', loss_sum/10)
-                loss_sum = 0.0
-
-                flow = flow_dict["flow3"].clone().detach()
-                vis_events_and_flows((xs_, ys_, ts_, ps_), 
-                                flow, 
-                                sensor_size=flow.shape[-2:],
-                                image_name="results/img{:07d}.png".format(epoch * 10000 + iteration))
+            
 
         torch.save(EVFlowNet_model.state_dict(), args.load_path+'/model%d'%epoch)
-        if epoch % 4 == 3:
-            scheduler.step()
+        
         print('iteration:', iteration)
         print('loss:', loss_sum/size)
         size = 0
