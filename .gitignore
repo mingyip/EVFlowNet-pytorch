@@ -1,0 +1,10 @@
+
+*.pyc
+
+src/results/
+
+src/results02/
+
+src/results01/
+
+*.png
