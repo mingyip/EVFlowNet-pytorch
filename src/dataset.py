@@ -169,7 +169,7 @@ class BaseDataset(Dataset):
         voxel_method = {'method': 'random_k_events',
                         'k': 30000,
                         't': 0.5,
-                        'sliding_window_w': 2500,
+                        'sliding_window_w': 5000,
                         'sliding_window_t': 0.1}
         self.set_voxel_method(voxel_method)
 
@@ -206,6 +206,8 @@ class BaseDataset(Dataset):
 
         assert 0 <= index < self.__len__(), "index {} out of bounds (0 <= x < {})".format(index, self.__len__())
         seed = random.randint(0, 2 ** 32) if seed is None else seed
+
+        # index = 21
 
         # # TODO: set max frames and skip 
         # # TODO: fix the last frame
@@ -278,14 +280,33 @@ class BaseDataset(Dataset):
 
         if self.voxel_method['method'] == 'between_frames':
 
-            frame = self.get_frame(index)
-            frame = self.transform_frame(frame, seed)
+            frame = self.get_frame(index).squeeze()
+            idx0 = self.find_ts_index(self.frame_ts[index])
 
-            frame_ = self.get_frame(index + 1)
-            frame_ = self.transform_frame(frame_, seed)
+            frame_ = self.get_frame(index + 1).squeeze()
+            idx1 = self.find_ts_index(self.frame_ts[index + 1])
+
+            xs, ys, ts, ps = self.get_events(idx0, idx1)
+            
+            if len(xs) == 0:
+                xs = torch.zeros((1), dtype=torch.float32)
+                ys = torch.zeros((1), dtype=torch.float32)
+                ts = torch.zeros((1), dtype=torch.float32)
+                ps = torch.zeros((1), dtype=torch.float32)
+                ts_0, ts_k = 0, 0
+            else:
+                ts_0, ts_k  = ts[0], ts[-1]
+                xs = torch.from_numpy(xs.astype(np.float32))
+                ys = torch.from_numpy(ys.astype(np.float32))
+                ts = torch.from_numpy((ts-ts_0).astype(np.float32))
+                ps = torch.from_numpy(ps.astype(np.float32))
+            dt = ts[-1] - ts[0]
+
+            voxel = self.get_voxel_grid(xs, ys, ts, ps, combined_voxel_channels=self.combined_voxel_channels)
+            voxel = self.transform_voxel(voxel, seed)
 
             item = {
-                    # 'events': {'xs':xs, 'ys':ys, 'ts':ts, 'ps':ps},
+                    'events': [xs, ys, ts, ps],
                     'frame': frame,
                     'frame_': frame_,
                     # TODO: add ground truth flow
@@ -296,11 +317,12 @@ class BaseDataset(Dataset):
                     'dt': dt}
         else:
             if return_frame:
-                frame, flow = self.find_ts_frame(ts_k)
+                # frame, flow = self.find_ts_frame(ts_k)
 
                 item = {'events': [xs, ys, ts, ps],
                         'frame': frame,
-                        'flow': flow,
+                        'frame_': frame_,
+                        # 'flow': flow,
                         'voxel': voxel,
                         'timestamp': ts_k,
                         'data_source_idx': self.data_source_idx,
@@ -308,6 +330,7 @@ class BaseDataset(Dataset):
             else:
                 item = {'events': [xs, ys, ts, ps],
                         'voxel': voxel,
+                        # 'flow': flow,
                         'timestamp': ts_k,
                         'data_source_idx': self.data_source_idx,
                         'dt': dt}
@@ -608,8 +631,9 @@ class DynamicH5Dataset(BaseDataset):
         idx = self.find_ts_frame_index(timestamp) - 1
 
         frame = self.get_frame(idx)
-        flow = self.get_flow(idx)
-        return frame, flow
+        frame_ = self.get_frame(idx + 1)
+        # flow = self.get_flow(idx)
+        return frame, frame_
 
 
     def compute_frame_indices(self):

@@ -185,7 +185,7 @@ def event_loss(events, flow, forward=True):
     Rd = x1_ * y1_
 
     # Prevent R and T to be zero
-    Ra = Ra+eps; Rb = Rb+eps; Rc = Rc+eps; Rd = Rd+eps
+    # Ra = Ra+eps; Rb = Rb+eps; Rc = Rc+eps; Rd = Rd+eps
 
     Ta = Ra * t
     Tb = Rb * t
@@ -231,7 +231,7 @@ class TotalLoss(torch.nn.Module):
         self._smoothness_weight = smoothness_weight
         self._weight_decay_weight = weight_decay_weight
 
-    def forward(self, flow_dict, events, EVFlowNet_model):
+    def forward(self, flow_dict, events, frame, frame_, EVFlowNet_model):
 
         # weight decay loss
         weight_decay_loss = 0
@@ -244,15 +244,16 @@ class TotalLoss(torch.nn.Module):
             smoothness_loss += compute_smoothness_loss(flow_dict["flow{}".format(i)])
         smoothness_loss *= self._smoothness_weight / 4.
 
-        # # Photometric loss.
-        # photometric_loss = compute_photometric_loss(prev_image,
-        #                                             next_image,
+        # Photometric loss.
+        # photometric_loss = compute_photometric_loss(frame,
+        #                                             frame_,
         #                                             flow_dict)
 
         # Event compensation loss.
         event_loss = compute_event_flow_loss(events, flow_dict)
 
 
+        # print(event_loss.item(), weight_decay_loss.item(), smoothness_loss.item())
         loss = weight_decay_loss + event_loss + smoothness_loss
 
         return loss

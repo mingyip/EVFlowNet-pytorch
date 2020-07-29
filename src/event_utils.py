@@ -182,7 +182,22 @@ def cvshow_voxel_grid(voxelgrid, cmp=cv.COLORMAP_JET):
     cv.imshow("Image", color_img)
     cv.waitKey(50000)
 
-def cvshow_all(voxel, flow=None, frame=None, compensated=None, image_name="image.png", cmp=cv.COLORMAP_JET):
+def cvshow_all(voxel, flow=None, frame=None, frame_=None, compensated=None, image_name="image.png", cmp=cv.COLORMAP_JET):
+
+
+
+    if frame is None:
+        frame = np.zeros((voxel.shape[0], voxel.shape[1], 3))
+        frame[..., 0] = voxel
+        frame[..., 2] = compensated
+    else:
+        frame = np.zeros_like(voxel)
+        frame[..., 0] = voxel
+        frame[..., 2] = compensated
+
+
+    # print(frame.shape)
+    # raise
 
     # TODO: check voxel, frame, flow shape
     # assert voxel.shape[1:] == frame.shape
@@ -198,7 +213,7 @@ def cvshow_all(voxel, flow=None, frame=None, compensated=None, image_name="image
 
 
     flow = flow_viz_np(flow[0], flow[1]) * 255
-    # flow[-100:, :100, :] = draw_color_wheel_np(100, 100) / 255
+    flow[-100:, :100, :] = draw_color_wheel_np(100, 100)
     # cv.imshow("", flow)
     # cv.waitKey()
     # raise
@@ -225,13 +240,8 @@ def cvshow_all(voxel, flow=None, frame=None, compensated=None, image_name="image
     #     # cv.waitKey(100000)
     #     # return
 
-    if frame is None:
-        frame = np.zeros_like(voxel)
-    else:
-        frame = cv.cvtColor(frame, cv.COLOR_GRAY2RGB)
-
     if compensated is None:
-        compensated = np.zeros_like(frame)
+        compensated = np.zeros_like(flow)
     else:
         # compensated_ = cv.normalize(compensated, None, 0, 255, cv.NORM_MINMAX)
         # compensated_ = compensated_.astype(np.uint8)
@@ -239,7 +249,8 @@ def cvshow_all(voxel, flow=None, frame=None, compensated=None, image_name="image
         # compensated = cv.applyColorMap(compensated_, cmp)
         compensated = cv.cvtColor(compensated, cv.COLOR_GRAY2BGR)
 
-    
+
+
     # print(np.max(voxel), np.min(voxel), np.max(flow), np.min(flow))
     # raise
 
