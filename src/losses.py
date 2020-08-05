@@ -3,6 +3,8 @@ import torchvision.transforms.functional as F
 import cv2
 import numpy as np
 
+from event_utils import events_to_image_torch
+
 def warp_images_with_flow(images, flow):
     """
     Generates a prediction of an image given the optical flow, as in Spatial Transformer Networks.
@@ -53,13 +55,12 @@ def compute_smoothness_loss(flow):
     flow_drcrop = flow[..., :-1, :-1]
     flow_dlcrop = flow[..., :-1, 1:]
     flow_urcrop = flow[..., 1:, :-1]
-    
+
     smoothness_loss = charbonnier_loss(flow_lcrop - flow_rcrop) +\
                       charbonnier_loss(flow_ucrop - flow_dcrop) +\
                       charbonnier_loss(flow_ulcrop - flow_drcrop) +\
                       charbonnier_loss(flow_dlcrop - flow_urcrop)
     smoothness_loss /= 4.
-    
     return smoothness_loss
 
 
@@ -74,7 +75,7 @@ def compute_photometric_loss(prev_images, next_images, flow_dict):
             flow = flow_dict["flow{}".format(i)][image_num]
             height = flow.shape[1]
             width = flow.shape[2]
-            
+
             prev_images_resize = F.to_tensor(F.resize(F.to_pil_image(prev_images[image_num].cpu()),
                                                     [height, width])).cuda()
             next_images_resize = F.to_tensor(F.resize(F.to_pil_image(next_images[image_num].cpu()),
@@ -104,23 +105,37 @@ def compute_event_flow_loss(events, flow_dict):
     total_event_loss = 0.
 
 
-    
+
     for batch_idx, (x, y, t, p) in enumerate(zip(xs, ys, ts, ps)):
         for flow_idx in range(len(flow_dict)):
             flow = flow_dict["flow{}".format(flow_idx)][batch_idx]
-            
+
+            # print(batch_idx, flow_idx, torch.max(flow), torch.min(flow))
+
             neg_mask = p == -1
             pos_mask = p == 1
-            t = (t - t[0]) / (t[-1] - t[0] + eps)
+            # t = (t - t[0]) / (t[-1] - t[0] + eps)
 
             # Resize the event image to match the flow dimension
+            # flow = flow / 2**(3-flow_idx)
             x_ = x / 2**(3-flow_idx)
             y_ = y / 2**(3-flow_idx)
+
+
+
+            # print(2**(3-flow_idx), torch.max(flow[0]).item(), torch.min(flow[0]).item(), torch.max(flow[1]).item(), torch.min(flow[1]).item())
 
             # Positive events
             xp = x_[pos_mask].to(device).type(torch.long)
             yp = y_[pos_mask].to(device).type(torch.long)
             tp = t[pos_mask].to(device).type(torch.float)
+
+            # img = 255 * events_to_image_torch(xp, yp, tp, sensor_size=(flow.shape[1], flow.shape[2]), interpolation='bilinear', padding=False)
+
+            # # print(img.shape, img.dtype)
+            # img=np.uint8(img.cpu().numpy() * 255)
+            # cv2.imshow("", img)
+            # cv2.waitKey(40000)
 
             # Negative events
             xn = x_[neg_mask].to(device).type(torch.long)
@@ -144,10 +159,12 @@ def compute_event_flow_loss(events, flow_dict):
             bn_loss = event_loss((xn, yn, tn), flow, forward=False)
 
             loss_weight_sum += 4
-            total_event_loss += fp_loss + bp_loss + fn_loss + bn_loss
-            # total_event_loss += fp_loss + bp_loss
+            total_event_loss += (fp_loss + bp_loss + fn_loss + bn_loss)
 
-    total_event_loss /= loss_weight_sum
+            # print(flow_idx, fp_loss)
+    # raise
+
+    # total_event_loss /= loss_weight_sum
     return total_event_loss
 
 
@@ -165,6 +182,13 @@ def event_loss(events, flow, forward=True):
     else:
         t_ = t[0] - t - eps
 
+
+    # print(t_[0].item(), t_[-100].item(), t_[-1].item())
+    # raise
+    # print(y[0].item(), x[0].item(), y[-100].item(), x[-100].item())
+    # print(flow[0,y[0],x[0]].item(), flow[0,y[-100],x[-100]].item())
+    # raise
+
     x_ = torch.clamp(x + t_ * flow[0,y,x], min=0, max=W-1)
     y_ = torch.clamp(y + t_ * flow[1,y,x], min=0, max=H-1)
 
@@ -179,48 +203,65 @@ def event_loss(events, flow, forward=True):
     y0_ = y_-y0
     y1_ = y1-y_
 
-    Ra = x0_ * y0_
-    Rb = x1_ * y0_
-    Rc = x0_ * y1_
-    Rd = x1_ * y1_
+    Ta = x0_ * y0_ * t
+    Tb = x1_ * y0_ * t
+    Tc = x0_ * y1_ * t
+    Td = x1_ * y1_ * t
 
     # Prevent R and T to be zero
     # Ra = Ra+eps; Rb = Rb+eps; Rc = Rc+eps; Rd = Rd+eps
 
-    Ta = Ra * t
-    Tb = Rb * t
-    Tc = Rc * t
-    Td = Rd * t
+    # Ta = Ra * t
+    # Tb = Rb * t
+    # Tc = Rc * t
+    # Td = Rd * t
 
     # Ta = Ta+eps; Tb = Tb+eps; Tc = Tc+eps; Td = Td+eps
 
     # Calculate interpolation flatterned index of 4 corners for all events
-    x1_idx = torch.clamp(x1, max=W-1)
-    y1_idx = torch.clamp(y1, max=H-1)
-    x0_idx = x0
-    y0_idx = y0
+    x1_idx = torch.clamp(x1, max=W-1).clone().detach()
+    y1_idx = torch.clamp(y1, max=H-1).clone().detach()
+    x0_idx = x0.clone().detach()
+    y0_idx = y0.clone().detach()
 
     Ia = (x1_idx + y1_idx * W).type(torch.long)
     Ib = (x0_idx + y1_idx * W).type(torch.long)
     Ic = (x1_idx + y0_idx * W).type(torch.long)
     Id = (x0_idx + y0_idx * W).type(torch.long)
 
-    # Compute the nominator and denominator
-    numerator = torch.zeros((W*H), dtype=flow.dtype, device=flow.device)
-    denominator = torch.zeros((W*H), dtype=flow.dtype, device=flow.device)
+    # print(x_[100].item(), y_[100].item(), t[100].item())
+    # print(Ta[100].item(), Tb[100].item(), Tc[100].item(), Td[100].item())
+    # print(Ia[100].item(), Ib[100].item(), Ic[100].item(), Id[100].item() )
+    # raise
 
-    denominator.index_add_(0, Ia, Ra)
-    denominator.index_add_(0, Ib, Rb)
-    denominator.index_add_(0, Ic, Rc)
-    denominator.index_add_(0, Id, Rd)
+    # Compute the nominator and denominator
+    numerator = torch.zeros((H*W), dtype=flow.dtype, device=flow.device)
+    denominator = torch.zeros((H*W), dtype=flow.dtype, device=flow.device)
+
+    # denominator.index_put_((y1_idx, x1_idx), Ra)
+    # denominator.index_put_((y1_idx, x0_idx), Rb)
+    # denominator.index_put_((y0_idx, x1_idx), Rc)
+    # denominator.index_put_((y0_idx, x0_idx), Rd)
+
+    # numerator.index_put_((y1_idx, x1_idx), Ta)
+    # numerator.index_put_((y1_idx, x0_idx), Tb)
+    # numerator.index_put_((y0_idx, x1_idx), Tc)
+    # numerator.index_put_((y0_idx, x0_idx), Td)
+
+    denominator.index_add_(0, Ia, torch.ones(len(Ia), device=flow.device))
+    denominator.index_add_(0, Ib, torch.ones(len(Ib), device=flow.device))
+    denominator.index_add_(0, Ic, torch.ones(len(Ic), device=flow.device))
+    denominator.index_add_(0, Id, torch.ones(len(Id), device=flow.device))
 
     numerator.index_add_(0, Ia, Ta)
     numerator.index_add_(0, Ib, Tb)
     numerator.index_add_(0, Ic, Tc)
     numerator.index_add_(0, Id, Td)
 
-    loss = (numerator / (denominator + eps)) ** 2
-    return loss.sum()
+    # num = (denominator != 0).sum()
+    loss = (numerator / (denominator + eps))
+    loss = torch.sum(torch.pow(loss ** 2 + 1e-6, 0.5))
+    return loss
 
 
 
@@ -232,6 +273,15 @@ class TotalLoss(torch.nn.Module):
         self._weight_decay_weight = weight_decay_weight
 
     def forward(self, flow_dict, events, frame, frame_, EVFlowNet_model):
+
+        # # Flow loss
+        # flow_loss = 0
+        # for batch_idx in range(len(flow_dict["flow0"])):
+        #     for flow_idx in range(len(flow_dict)):
+                
+        #         flow = flow_dict["flow{}".format(flow_idx)][batch_idx]
+        #         H, W = flow.shape[1:]
+        #         flow_loss += torch.sum(flow**2)/(H*W)*self._weight_decay_weight
 
         # weight decay loss
         weight_decay_loss = 0
@@ -253,8 +303,10 @@ class TotalLoss(torch.nn.Module):
         event_loss = compute_event_flow_loss(events, flow_dict)
 
 
-        # print(event_loss.item(), weight_decay_loss.item(), smoothness_loss.item())
-        loss = weight_decay_loss + event_loss + smoothness_loss
+        # loss = event_loss
+        loss = weight_decay_loss + event_loss + smoothness_loss * 200
+
+        print(weight_decay_loss.item(), event_loss.item(), smoothness_loss.item() * 200)
 
         return loss
 

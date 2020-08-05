@@ -24,12 +24,13 @@ class upsample_conv2d_and_predict_flow(nn.Module):
     """
     an upsample convolution layer which includes a nearest interpolate and a general_conv2d
     """
-    def __init__(self, in_channels, out_channels, ksize=3, do_batch_norm=False):
+    def __init__(self, in_channels, out_channels, ksize=3, flow_scale=256, do_batch_norm=False):
         super(upsample_conv2d_and_predict_flow, self).__init__()
         self._in_channels = in_channels
         self._out_channels = out_channels
         self._ksize = ksize
         self._do_batch_norm = do_batch_norm
+        self.flow_scale = flow_scale
 
         self.general_conv2d = general_conv2d(in_channels=self._in_channels,
                                              out_channels=self._out_channels,
@@ -54,7 +55,7 @@ class upsample_conv2d_and_predict_flow(nn.Module):
         conv = self.pad(conv)
         conv = self.general_conv2d(conv)
 
-        flow = self.predict_flow(conv) * 256.
+        flow = self.predict_flow(conv) * self.flow_scale
         
         return torch.cat([conv,flow.clone()], dim=1), flow
 

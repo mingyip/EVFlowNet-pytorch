@@ -120,7 +120,12 @@ def main():
                 loss_sum = 0.0
 
                 flow = flow_dict["flow3"].clone().detach()
-                flow = -1 * flow[0].unsqueeze(0)
+                # flow = -1 * flow[0].unsqueeze(0)
+                flow_x = flow[0, 0]
+                flow_y = flow[0, 1]
+
+                print(flow.shape, torch.mean(flow_x[flow_x>0]).item(), torch.mean(flow_x[flow_x<0]).item(),
+                                        torch.mean(flow_y[flow_y>0]).item(), torch.mean(flow_y[flow_y<0]).item())
 
                 voxel_ = voxel.cpu().numpy().squeeze()
                 voxel_ = np.sum(voxel_, axis=0)
@@ -133,8 +138,7 @@ def main():
                                 sensor_size=flow.shape[-2:],
                                 image_name="results/img{:07d}.png".format(epoch * 10000 + iteration))
 
-            if iteration % 100 == 99:
-                scheduler.step()
+            
 
             loss.backward()
             optimizer.step()
@@ -142,7 +146,8 @@ def main():
             iteration += 1
             size += 1
 
-
+        # if iteration % 100 == 99:
+        scheduler.step()
         torch.save(EVFlowNet_model.state_dict(), args.load_path+'/model%d'%epoch)
         
         print('iteration:', iteration)
